@@ -172,13 +172,13 @@ class Client:
 		# Pause request
 		elif requestCode == self.PAUSE and self.state == self.PLAYING:
 			# Update RTSP sequence number.
-			# ...
+			self.rtspSeq += 1
 			
 			# Write the RTSP request to be sent.
-			# request = ...
+			request = "PLAY %s RTSP/1.0\nCSeq: %d\nSession= %d\n" % (self.fileName, self.rtspSeq, self.rtpPort)
 			
 			# Keep track of the sent request.
-			# self.requestSent = ...
+			self.requestSent = self.PLAY
 			
 		# Teardown request
 		elif requestCode == self.TEARDOWN and not self.state == self.INIT:
