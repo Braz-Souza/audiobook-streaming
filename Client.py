@@ -143,7 +143,7 @@ class Client:
 	def sendRtspRequest(self, requestCode):
 		"""Send RTSP request to the server."""	
 		#-------------
-		# TO COMPLETE
+		# COMPLETED
 		#-------------
 		
 		# Setup request
@@ -194,7 +194,7 @@ class Client:
 			return
 		
 		# Send the RTSP request using rtspSocket.
-		# ...
+		self.rtspSocket.send(request.encode())
 		
 		print '\nData sent:\n' + request
 	
