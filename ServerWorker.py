@@ -33,7 +33,9 @@ class ServerWorker:
 		while True:            
 			data = connSocket.recv(256)
 			if data:
-				print "Data received:\n" + data
+				if isinstance(data, bytes):
+					data = data.decode('utf-8')
+				print("Data received:\n" + data)
 				self.processRtspRequest(data)
 	
 	def processRtspRequest(self, data):
@@ -53,7 +55,7 @@ class ServerWorker:
 		if requestType == self.SETUP:
 			if self.state == self.INIT:
 				# Update state
-				print "processing SETUP\n"
+				print("processing SETUP\n")
 				
 				try:
 					self.clientInfo['videoStream'] = VideoStream(filename)
@@ -73,7 +75,7 @@ class ServerWorker:
 		# Process PLAY request 		
 		elif requestType == self.PLAY:
 			if self.state == self.READY:
-				print "processing PLAY\n"
+				print("processing PLAY\n")
 				self.state = self.PLAYING
 				
 				# Create a new socket for RTP/UDP
@@ -89,7 +91,7 @@ class ServerWorker:
 		# Process PAUSE request
 		elif requestType == self.PAUSE:
 			if self.state == self.PLAYING:
-				print "processing PAUSE\n"
+				print("processing PAUSE\n")
 				self.state = self.READY
 				
 				self.clientInfo['event'].set()
@@ -98,7 +100,7 @@ class ServerWorker:
 		
 		# Process TEARDOWN request
 		elif requestType == self.TEARDOWN:
-			print "processing TEARDOWN\n"
+			print("processing TEARDOWN\n")
 
 			self.clientInfo['event'].set()
 			
@@ -124,7 +126,7 @@ class ServerWorker:
 					port = int(self.clientInfo['rtpPort'])
 					self.clientInfo['rtpSocket'].sendto(self.makeRtp(data, frameNumber),(address,port))
 				except:
-					print "Connection Error"
+					print("Connection Error")
 					#print '-'*60
 					#traceback.print_exc(file=sys.stdout)
 					#print '-'*60
@@ -152,10 +154,10 @@ class ServerWorker:
 			#print "200 OK"
 			reply = 'RTSP/1.0 200 OK\nCSeq: ' + seq + '\nSession: ' + str(self.clientInfo['session'])
 			connSocket = self.clientInfo['rtspSocket'][0]
-			connSocket.send(reply)
+			connSocket.send(reply.encode('utf-8'))
 		
 		# Error messages
 		elif code == self.FILE_NOT_FOUND_404:
-			print "404 NOT FOUND"
+			print("404 NOT FOUND")
 		elif code == self.CON_ERR_500:
-			print "500 CONNECTION ERROR"
+			print("500 CONNECTION ERROR")
