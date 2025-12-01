@@ -175,21 +175,21 @@ class Client:
 			self.rtspSeq += 1
 			
 			# Write the RTSP request to be sent.
-			request = "PLAY %s RTSP/1.0\nCSeq: %d\nSession= %d\n" % (self.fileName, self.rtspSeq, self.rtpPort)
+			request = "PAUSE %s RTSP/1.0\nCSeq: %d\nSession= %d\n" % (self.fileName, self.rtspSeq, self.rtpPort)
 			
 			# Keep track of the sent request.
-			self.requestSent = self.PLAY
+			self.requestSent = self.PAUSE
 			
 		# Teardown request
 		elif requestCode == self.TEARDOWN and not self.state == self.INIT:
 			# Update RTSP sequence number.
-			# ...
+			self.rtspSeq += 1
 			
 			# Write the RTSP request to be sent.
-			# request = ...
+			request = "TEARDOWN %s RTSP/1.0\nCSeq: %d\nSession= %d\n" % (self.fileName, self.rtspSeq, self.rtpPort)
 			
 			# Keep track of the sent request.
-			# self.requestSent = ...
+			self.requestSent = self.TEARDOWN
 		else:
 			return
 		
