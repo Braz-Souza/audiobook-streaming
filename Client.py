@@ -150,13 +150,13 @@ class Client:
 		if requestCode == self.SETUP and self.state == self.INIT:
 			threading.Thread(target=self.recvRtspReply).start()
 			# Update RTSP sequence number.
-			# ...
+			self.rtspSeq += 1
 			
 			# Write the RTSP request to be sent.
-			# request = ...
+			request = "SETUP %s RTSP/1.0\nCSeq: %d\nTransport: RTP/UDP; client_port= %d\n" % (self.fileName, self.rtspSeq, self.rtpPort)
 			
 			# Keep track of the sent request.
-			# self.requestSent = ...
+			self.requestSent = self.SETUP
 		
 		# Play request
 		elif requestCode == self.PLAY and self.state == self.READY:
