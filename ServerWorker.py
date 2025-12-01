@@ -1,7 +1,7 @@
 from random import randint
 import sys, traceback, threading, socket
 
-from VideoStream import VideoStream
+from AudioStream import AudioStream
 from RtpPacket import RtpPacket
 
 class ServerWorker:
@@ -58,10 +58,12 @@ class ServerWorker:
 				print("processing SETUP\n")
 				
 				try:
-					self.clientInfo['videoStream'] = VideoStream(filename)
+					self.clientInfo['audioStream'] = AudioStream(filename)
 					self.state = self.READY
-				except IOError:
+				except IOError as e:
+					print(f"ERRO: Arquivo não encontrado - {filename}")
 					self.replyRtsp(self.FILE_NOT_FOUND_404, seq[1])
+					return
 				
 				# Generate a randomized RTSP session ID
 				self.clientInfo['session'] = randint(100000, 999999)
@@ -70,7 +72,8 @@ class ServerWorker:
 				self.replyRtsp(self.OK_200, seq[1])
 				
 				# Get the RTP/UDP port from the last line
-				self.clientInfo['rtpPort'] = request[2].split(' ')[3]
+				self.clientInfo['rtpPort'] = request[2].split(' ')[3].strip()
+				print(f"RTP Port extraído: '{self.clientInfo['rtpPort']}'")
 		
 		# Process PLAY request 		
 		elif requestType == self.PLAY:
@@ -118,18 +121,17 @@ class ServerWorker:
 			if self.clientInfo['event'].isSet(): 
 				break 
 				
-			data = self.clientInfo['videoStream'].nextFrame()
+			data = self.clientInfo['audioStream'].nextFrame()
 			if data: 
-				frameNumber = self.clientInfo['videoStream'].frameNbr()
+				frameNumber = self.clientInfo['audioStream'].frameNbr()
 				try:
 					address = self.clientInfo['rtspSocket'][1][0]
 					port = int(self.clientInfo['rtpPort'])
 					self.clientInfo['rtpSocket'].sendto(self.makeRtp(data, frameNumber),(address,port))
 				except:
 					print("Connection Error")
-					#print '-'*60
-					#traceback.print_exc(file=sys.stdout)
-					#print '-'*60
+					traceback.print_exc()
+					break
 
 	def makeRtp(self, payload, frameNbr):
 		"""RTP-packetize the video data."""
@@ -138,7 +140,7 @@ class ServerWorker:
 		extension = 0
 		cc = 0
 		marker = 0
-		pt = 26 # MJPEG type
+		pt = 14 # MP3 TYPE
 		seqnum = frameNbr
 		ssrc = 0 
 		

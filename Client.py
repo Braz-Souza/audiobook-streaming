@@ -1,12 +1,13 @@
 from tkinter import *
 import tkinter.messagebox as tkMessageBox
-from PIL import Image, ImageTk
 import socket, threading, sys, traceback, os
+import pygame
+import io
 
 from RtpPacket import RtpPacket
 
 CACHE_FILE_NAME = "cache-"
-CACHE_FILE_EXT = ".jpg"
+CACHE_FILE_EXT = ".mp3"
 
 class Client:
 	INIT = 0
@@ -35,6 +36,58 @@ class Client:
 		self.connectToServer()
 		self.frameNbr = 0
 		
+		os.environ["SDL_VIDEODRIVER"] = "dummy"
+		pygame.init()  
+		pygame.mixer.init()
+		self.playlist = []
+		self.playIndex = 0
+		self.SONG_END = pygame.USEREVENT + 1
+		pygame.mixer.music.set_endevent(self.SONG_END)
+		self.audioBuffer = b''
+		self.audioStarted = False
+		self.receivingPackets = False
+		self.currentCacheIndex = 0
+		self.maxCacheSize = 150000
+		self.cacheFiles = {}
+		
+		self.checkMusicEvents()
+			
+	def checkMusicEvents(self):
+		"""Monitora eventos do Pygame para gerenciar a fila sem pular faixas."""
+		
+		for event in pygame.event.get():
+			if event.type == self.SONG_END:
+				self.queueNextSong()
+
+		if not pygame.mixer.music.get_busy() and len(self.playlist) > self.playIndex:
+			self.playImmediate()
+
+		self.master.after(100, self.checkMusicEvents)
+
+	def playImmediate(self):
+		"""Carrega e toca imediatamente (usado no início ou após buffer vazio)."""
+		if self.playIndex < len(self.playlist):
+			song = self.playlist[self.playIndex]
+			try:
+				print(f"[PLAYER] Tocando agora: {song}")
+				pygame.mixer.music.load(song)
+				pygame.mixer.music.play()
+				self.playIndex += 1
+				self.queueNextSong()
+			except Exception as e:
+				print(f"[PLAYER] Erro ao tocar: {e}")
+
+	def queueNextSong(self):
+		"""Coloca a próxima música na fila de espera do Pygame."""
+		if self.playIndex < len(self.playlist) and self.state == self.PLAYING:
+			next_song = self.playlist[self.playIndex]
+			try:
+				print(f"[PLAYER] Enfileirando próxima: {next_song}")
+				pygame.mixer.music.queue(next_song)
+				self.playIndex += 1
+			except Exception as e:
+				print(f"[PLAYER] Erro ao enfileirar: {e}")
+		
 	def createWidgets(self):
 		"""Build GUI."""
 		# Create Setup button
@@ -61,34 +114,63 @@ class Client:
 		self.teardown["command"] =  self.exitClient
 		self.teardown.grid(row=1, column=3, padx=2, pady=2)
 		
-		# Create a label to display the movie
-		self.label = Label(self.master, height=19)
+		# Create a label to display the audio status
+		self.label = Label(self.master, height=19, text="Audiobook Player\n\nAguardando conexão...", font=("Arial", 16))
 		self.label.grid(row=0, column=0, columnspan=4, sticky=W+E+N+S, padx=5, pady=5) 
 	
 	def setupMovie(self):
 		"""Setup button handler."""
 		if self.state == self.INIT:
 			self.sendRtspRequest(self.SETUP)
+			self.updateAudioStatus("Configurando conexão...")
 	
 	def exitClient(self):
 		"""Teardown button handler."""
-		self.sendRtspRequest(self.TEARDOWN)		
+		self.sendRtspRequest(self.TEARDOWN)
+		pygame.mixer.quit()
 		self.master.destroy() # Close the gui window
-		os.remove(CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT) # Delete the cache image from video
+		
+		for index, cachefile in self.cacheFiles.items():
+			if os.path.exists(cachefile):
+				os.remove(cachefile)
+				
+		cachefile = CACHE_FILE_NAME + str(self.sessionId) + f"-{self.currentCacheIndex}" + CACHE_FILE_EXT
+		if os.path.exists(cachefile):
+			os.remove(cachefile)
 
 	def pauseMovie(self):
 		"""Pause button handler."""
 		if self.state == self.PLAYING:
+			self.receivingPackets = False
+			pygame.mixer.music.pause()
+			self.updateAudioStatus("Audiobook pausado")
 			self.sendRtspRequest(self.PAUSE)
 	
 	def playMovie(self):
 		"""Play button handler."""
 		if self.state == self.READY:
-			# Create a new thread to listen for RTP packets
+			print("Iniciando reprodução...")
+			
+			if self.audioStarted:
+				try:
+					pygame.mixer.music.unpause()
+					self.receivingPackets = True
+					threading.Thread(target=self.listenRtp).start()
+					self.playEvent = threading.Event()
+					self.playEvent.clear()
+					self.updateAudioStatus("Reproduzindo audiobook...")
+					self.sendRtspRequest(self.PLAY)
+					return
+				except Exception as e:
+					print(f"Erro ao despausar: {e}")
+			
+			self.audioStarted = False
+			self.receivingPackets = True
 			threading.Thread(target=self.listenRtp).start()
 			self.playEvent = threading.Event()
 			self.playEvent.clear()
 			self.sendRtspRequest(self.PLAY)
+			self.updateAudioStatus("Carregando audiobook...")
 	
 	def listenRtp(self):		
 		"""Listen for RTP packets."""
@@ -100,37 +182,61 @@ class Client:
 					rtpPacket.decode(data)
 					
 					currFrameNbr = rtpPacket.seqNum()
-					print("Current Seq Num: " + str(currFrameNbr))
-										
-					if currFrameNbr > self.frameNbr: # Discard the late packet
+					
+					if currFrameNbr > self.frameNbr:
 						self.frameNbr = currFrameNbr
-						self.updateMovie(self.writeFrame(rtpPacket.getPayload()))
 			except:
-				# Stop listening upon requesting PAUSE or TEARDOWN
 				if self.playEvent.isSet(): 
 					break
 				
-				# Upon receiving ACK for TEARDOWN request,
-				# close the RTP socket
 				if self.teardownAcked == 1:
 					self.rtpSocket.shutdown(socket.SHUT_RDWR)
 					self.rtpSocket.close()
 					break
+		self.receivingPackets = False
 					
-	def writeFrame(self, data):
-		"""Write the received frame to a temp image file. Return the image file."""
-		cachename = CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
-		file = open(cachename, "wb")
-		file.write(data)
-		file.close()
-		
-		return cachename
+	def writeAudioFrame(self, data):
+		"""Write the received audio data to a cache file and play it."""
+		self.audioBuffer += data
+		if len(self.audioBuffer) >= self.maxCacheSize and self.receivingPackets:
+			cachename = CACHE_FILE_NAME + str(self.sessionId) + f"-{self.currentCacheIndex}" + CACHE_FILE_EXT
+			
+			with open(cachename, "wb") as file:
+				file.write(self.audioBuffer)
+
+			self.playlist.append(cachename)
+			print(f"Arquivo salvo e adicionado à playlist: {cachename}")
+			
+			# Adicionar ao dicionário com índice
+			self.cacheFiles[self.currentCacheIndex] = cachename
+			print(f"Cache #{self.currentCacheIndex} criado: {len(self.audioBuffer)} bytes -> {cachename}")
+			
+			if not self.audioStarted and self.currentCacheIndex == 0:
+				try:
+					pygame.mixer.music.load(cachename)
+					pygame.mixer.music.play()
+					self.audioStarted = True
+					self.updateAudioStatus("Reproduzindo audiobook...")
+					print(f"========== INICIOU REPRODUÇÃO ==========")
+					print(f"Buffer inicial: {len(self.audioBuffer)} bytes")
+					print(f"Frame atual: {self.frameNbr}")
+					print(f"=========================================")
+				except Exception as e:
+					print(f"Erro ao reproduzir áudio: {e}")
+			
+			self.audioBuffer = b''
+			self.currentCacheIndex += 1
+		else:
+			cachename = CACHE_FILE_NAME + str(self.sessionId) + f"-{self.currentCacheIndex}" + CACHE_FILE_EXT
+			with open(cachename, "wb") as file:
+				file.write(self.audioBuffer)
+			
+			if len(self.audioBuffer) % 81920 == 0:
+				print(f"Buffer acumulado: {len(self.audioBuffer)} bytes")
 	
-	def updateMovie(self, imageFile):
-		"""Update the image file as video frame in the GUI."""
-		photo = ImageTk.PhotoImage(Image.open(imageFile))
-		self.label.configure(image = photo, height=288) 
-		self.label.image = photo
+	def updateAudioStatus(self, status):
+		"""Update the audio status in the GUI."""
+		self.label.configure(text=f"Audiobook Player\n\n{status}")
 		
 	def connectToServer(self):
 		"""Connect to the Server. Start a new RTSP/TCP session."""
